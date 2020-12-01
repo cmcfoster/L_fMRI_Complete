@@ -1,0 +1,176 @@
+---
+date: "2020-06-17 (Updated on `r Sys.Date()`)"
+output: 
+  html_document:
+    highlight: textmate
+    theme: lumen
+    code_download: TRUE
+    code_folding: hide
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+params:
+  task: "nback"
+  results_name: "contrast_x_age_w1_mc"
+title: "Group Cluster Analyses: `r params$task`" 
+---
+
+## R Packages
+```{r}
+packages <- c("tidyverse", "glue", "interactions", "psych")
+xfun::pkg_attach2(packages, message = F)
+```
+
+## R Functions
+```{r}
+get_fig <- function(model) {
+  interact_plot(
+    model = model,
+    pred = "contrast",
+    modx = "age_w1_mc",
+    modx.labels = c(
+      paste0("-1 SD ( ~", age_w1_lo, " )"),
+      paste0("Mean ( ~", age_w1_m, " )"),
+      paste0("+1 SD ( ~", age_w1_hi, " )")
+    ),
+    mod2 = lag_years,
+    mod2.values = c(0, m_lag_years),
+    mod2.labels = c("Wave 1", "Wave 2"),
+    x.label = "Contrast",
+    y.label = "COPE"
+  )
+}
+
+get_jn_fig <- function(model) {
+  johnson_neyman(model = model,
+                 pred = "contrast",
+                 modx = "age_w1_mc")
+}
+
+get_formula <- function(dv) {
+  glue("{dv} ~ contrast * age_w1_mc * lag_years + (1 + contrast | Subj)")
+}
+```
+
+## Set Parameters
+```{r}
+base_dir <- "/Volumes/shared/KK_KR_JLBS/Longitudinal_Data/W1_W2/MRI/FMRI"
+in_dir <- glue("{base_dir}/group_analyses/{params$task}")
+in_file <- glue("{in_dir}/results_{params$results_name}_masked_betas.csv")
+beta_name <- params$results_name %>%
+  str_replace(., "_x_", ":")
+```
+
+## Data
+```{r}
+df <- read.csv(in_file)
+df %>%
+  select(contains("beta")) %>%
+  describe() %>%
+  select(n, mean, sd, median, min, max, skew, kurtosis, se)
+```
+
+## Set Descriptives
+```{r}
+if (params$task == "dj") {
+  m_age_w1 <- 52.58857
+} else if (params$task == "nback") {
+  m_age_w1 <- 52.08929
+}
+
+sd_age_w1 <- df %>%
+  filter(lag_years == 0) %>%
+  select(Subj, age_w1_mc) %>%
+  unique() %>%
+  select(age_w1_mc) %>%
+  unlist() %>%
+  sd()
+age_w1_m <- round(m_age_w1, 0)
+age_w1_lo <- round(m_age_w1 - sd_age_w1, 0)
+age_w1_hi <- round(m_age_w1 + sd_age_w1, 0)
+m_lag_years <- mean(df$lag_years[df$lag_years != 0])
+```
+
+## Each `r beta_name` Cluster
+```{r}
+dv_list <- colnames(df) %>%
+  str_subset(., "beta")
+
+direction_list <- NULL
+for (j in 1:length(dv_list)) {
+  
+  cat("\n### Cluster ", j, "\n")
+  
+  formula <- get_formula(dv_list[j])
+  model <- lmerTest::lmer(eval(as.formula(formula)), df)
+  model_summary <- summary(model)
+  print(model_summary)
+
+  b <- model_summary$coefficients[beta_name, "Estimate"]
+  direction <- b / abs(b)
+  direction_list <- c(direction_list, direction)
+  
+  fig <- get_fig(model)
+  print(fig)
+  
+}
+```
+
+## Create Mean Pos. and Neg. Clusters
+```{r}
+if (length(unique(direction_list)) == 2) {
+  df$cluster_betas_pos <- df[grep("beta", colnames(df))] %>%
+    .[, which(direction_list == 1)] %>%
+    rowMeans()
+  
+  if (length(which(direction_list == -1)) > 1) {
+    df$cluster_betas_neg <- df[grep("beta", colnames(df))] %>%
+    .[, which(direction_list == -1)] %>%
+    rowMeans()
+  } else {
+    df$cluster_betas_neg <- df[grep("beta", colnames(df))] %>%
+    .[, which(direction_list == -1)]
+  }
+  
+  pos_results = T
+  neg_results = T
+} else if (unique(direction_list) == 1) {
+  df$cluster_betas_pos <- df[grep("beta", colnames(df))] %>%
+    .[, which(direction_list == 1)] %>%
+    rowMeans()
+  pos_results = T
+  neg_results = F
+} else if (unique(direction_list) == -1) {
+  df$cluster_betas_neg <- df[grep("beta", colnames(df))] %>%
+    .[, which(direction_list == -1)] %>%
+    rowMeans()
+  pos_results = F
+  neg_results = T
+}
+```
+
+## Pos. `r beta_name` Clusters
+```{r}
+if (pos_results == T) {
+  formula <- get_formula("cluster_betas_pos")
+  model <- lmerTest::lmer(eval(as.formula(formula)), df)
+  model_summary <- summary(model)
+  print(model_summary)
+  fig <- get_fig(model)
+  print(fig)
+}
+```
+
+## Neg. `r beta_name` Clusters
+```{r}
+if (neg_results == T) {
+  formula <- get_formula("cluster_betas_neg")
+  model <- lmerTest::lmer(eval(as.formula(formula)), df)
+  model_summary <- summary(model)
+  print(model_summary)
+  fig <- get_fig(model)
+  print(fig)
+}
+```
